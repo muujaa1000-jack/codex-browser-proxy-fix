@@ -1,0 +1,8 @@
+*.bak
+*.tmp
+*.log
+*.zip
+.codex/
+backups/
+private/
+test-results/
