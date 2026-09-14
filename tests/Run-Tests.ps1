@@ -153,6 +153,46 @@ try {
             Assert-True ([IO.File]::ReadAllText((Join-Path $actual 'launch.mjs')) -ceq $fixture) 'Junction target changed.'
         }
     }
+    Test-Case 'Runtime launcher supports apply, repeat, exact restore and tamper refusal' {
+        param($path)
+        $runtimeText = "// Synthetic runtime fixture; not vendor source.`ntry {`n  await fixture.launch();`n} catch (error) { throw error; }`n"
+        $runtimeBytes = [Text.Encoding]::UTF8.GetBytes($runtimeText)
+        & $module { param($b) $script:RuntimeHash = Get-BytesHash $b } $runtimeBytes
+        [IO.File]::WriteAllBytes($path, $runtimeBytes)
+        Assert-True ((Invoke-ProxyFix Check $path).Status -eq 'Compatible') 'Runtime original not recognized.'
+        Invoke-ProxyFix Apply $path 'http://127.0.0.1:12345' | Out-Null
+        $patched = [IO.File]::ReadAllText($path)
+        Assert-True ($patched.Contains('process.env.HTTP_PROXY ||= "http://127.0.0.1:12345";')) 'Runtime proxy missing.'
+        Assert-True ($patched.IndexOf('process.env.HTTP_PROXY') -lt $patched.IndexOf('try {')) 'Defaults must precede launch.'
+        Assert-True ((Invoke-ProxyFix Apply $path 'http://127.0.0.1:12345').Status -eq 'AlreadyPatched') 'Runtime patch not idempotent.'
+        Expect-Failure { Invoke-ProxyFix Apply $path 'http://127.0.0.1:12346' }
+        Assert-True ((Invoke-ProxyFix Restore $path).Status -eq 'Restored') 'Runtime restore failed.'
+        Assert-True ([IO.File]::ReadAllText($path) -ceq $runtimeText) 'Runtime bytes changed after restore.'
+        Invoke-ProxyFix Apply $path 'http://127.0.0.1:12345' | Out-Null
+        [IO.File]::AppendAllText($path, '// later edit')
+        Expect-Failure { Invoke-ProxyFix Restore $path }
+    }
+    Test-Case 'Runtime discovery verifies manifest command and runtime boundary' {
+        param($path, $dir)
+        $versionDir = Join-Path $dir 'plugins/cache/openai-bundled/unified-computer-use/26.908.40834'
+        $runtimeRoot = Join-Path $dir 'runtimes/cua_node'
+        $bin = Join-Path $runtimeRoot 'a708e72b10c27b59/bin'
+        $target = Join-Path $bin 'node_modules/@oai/cua-repl/bin/cua-repl.mjs'
+        [IO.Directory]::CreateDirectory($versionDir) | Out-Null
+        [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target)) | Out-Null
+        [IO.File]::WriteAllText($target, '// fixture')
+        $manifestPath = Join-Path $versionDir '.mcp.json'
+        $server = @{command=(Join-Path $bin 'node.exe');args=@($target)}
+        [IO.File]::WriteAllText($manifestPath, (@{mcpServers=@{cua_repl=$server}} | ConvertTo-Json -Depth 5))
+        Assert-True ((Find-ProxyFixLauncher -CodexHome $dir -RuntimeRoot $runtimeRoot) -eq $target) 'Runtime discovery failed.'
+        $server.command = Join-Path $dir 'other/node.exe'
+        [IO.File]::WriteAllText($manifestPath, (@{mcpServers=@{cua_repl=$server}} | ConvertTo-Json -Depth 5))
+        Expect-Failure { Find-ProxyFixLauncher -CodexHome $dir -RuntimeRoot $runtimeRoot }
+        $server.command = Join-Path $bin 'node.exe'
+        $server.args = @($path)
+        [IO.File]::WriteAllText($manifestPath, (@{mcpServers=@{cua_repl=$server}} | ConvertTo-Json -Depth 5))
+        Expect-Failure { Find-ProxyFixLauncher -CodexHome $dir -RuntimeRoot $runtimeRoot }
+    }
     Write-Host "$script:count tests passed. No real installation was modified."
 } finally {
     $resolved = [IO.Path]::GetFullPath($testRoot)

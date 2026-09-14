@@ -8,11 +8,11 @@ This is not a universal browser repair tool. Extension connection errors, a clos
 
 ## Support and evidence
 
-| Item | Initial support |
+| Item | v0.2.0 support |
 | --- | --- |
 | OS | Windows |
 | Shell | PowerShell 7.0 or later (`pwsh`); implementation tested locally on 7.6.5 |
-| Plugin | `unified-computer-use` **26.903.71938** only |
+| Plugin | `unified-computer-use` **26.903.71938** and **26.908.40834** |
 | Original launcher SHA256 | `a50b66879f7b72e45ab6fbaad77eff14a87680a946135f410c121b9b166a2597` |
 | Proxy | Credential-free **HTTP proxy** on `127.0.0.1` or `[::1]`, explicit port |
 | Additional packages | None |
@@ -20,6 +20,16 @@ This is not a universal browser repair tool. Extension connection errors, a clos
 A preceding local experiment on Codex desktop package 26.903.9818.0 restored page opening, content reading, link clicking and back navigation in both Chrome and the in-app browser after a restart. The patch survived that restart. This is single-environment evidence, not a cross-version or long-term reliability claim. The plugin and desktop package version numbers are different identifiers.
 
 The released script adds backup and validation checks around that workaround. It refuses any launcher bytes it does not recognize, including independently edited or manually patched copies. Do not replace the expected fingerprint to make a newer version pass.
+
+### New runtime launcher (v0.2.0)
+
+Plugin **26.908.40834** uses the runtime entry `bin/node_modules/@oai/cua-repl/bin/cua-repl.mjs` under runtime **a708e72b10c27b59**, instead of the old plugin `scripts/launch.mjs`. Its verified original SHA256 is `992174a5e637645aeb444adfdb1bae688e997bb84d7db07532f68e358e60f278`. The table fingerprint above belongs to the older launcher.
+
+Discovery checks the generated manifest against that exact runtime and its Node executable under the current user's local Codex runtime directory. Unknown runtime versions are refused. For this entry, fallback environment values are inserted before `launch()` and inherited by the child process.
+
+A local repair on desktop **26.908.4834.0**, using this insertion point, survived a restart and passed open/read/click/back in Chrome and the in-app browser. The released script is separately tested on an unpublished original-file copy for apply/repeat/restore and process environment forwarding. This does not establish reliability on all sites or future upgrades.
+
+If multiple plugin versions are cached, append `-PluginVersion 26.908.40834` to each command only after confirming it is active. A manual patch is intentionally reported as Unsupported: v0.2.0 does not adopt or overwrite it. If your manual repair works, leave it in place.
 
 ## 1. Get the tool
 
@@ -69,7 +79,7 @@ For a proxy listening only on IPv6 loopback, use `http://[::1]:YOUR_PORT` with a
 
 Apply checks that the specified local TCP port accepts a connection. This proves only that a listener exists—not that it speaks HTTP proxy or can reach upstream services. The tool does not make external test requests or reuse account credentials.
 
-Expected result: **Applied**. The original launcher is backed up next to itself as `launch.mjs.codex-browser-proxy-fix.original.bak`. Keep that file. Repeating Apply with the same address returns **AlreadyPatched**. To change the address, Restore first.
+Expected result: **Applied**. The original launcher is backed up next to itself as `<launcher filename>.codex-browser-proxy-fix.original.bak` (the filename is `launch.mjs` or `cua-repl.mjs`). Keep that file. Repeating Apply with the same address returns **AlreadyPatched**. To change the address, Restore first.
 
 ## 4. Restart and verify actual browser operations
 
@@ -93,7 +103,7 @@ Restore requires the original backup fingerprint and the exact recognized curren
 
 ## What it changes
 
-Only the verified launcher's child-process environment receives four fallback values:
+Only the verified launcher is changed to supply four environment defaults to the browser tool process:
 
 - `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`: your supplied local HTTP proxy URL.
 - `NO_PROXY`: `localhost,127.0.0.1,::1`.

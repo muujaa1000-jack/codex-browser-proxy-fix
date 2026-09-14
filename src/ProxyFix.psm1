@@ -3,6 +3,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:OriginalHash = 'a50b66879f7b72e45ab6fbaad77eff14a87680a946135f410c121b9b166a2597'
 $script:SupportedVersion = '26.903.71938'
+$script:RuntimeVersion = '26.908.40834'
+$script:RuntimeHash = '992174a5e637645aeb444adfdb1bae688e997bb84d7db07532f68e358e60f278'
 $script:BackupSuffix = '.codex-browser-proxy-fix.original.bak'
 
 function Get-BytesHash([byte[]]$Bytes) {
@@ -39,6 +41,23 @@ function ConvertTo-LocalProxy([string]$ProxyUrl) {
 function New-PatchedBytes([byte[]]$Original, [string]$Proxy) {
     $encoding = [Text.UTF8Encoding]::new($false, $true)
     $text = $encoding.GetString($Original)
+    if ((Get-BytesHash $Original) -eq $script:RuntimeHash) {
+        $anchor = 'try {'
+        if ([regex]::Matches($text, [regex]::Escape($anchor)).Count -ne 1) { throw 'The runtime launch anchor is not unique.' }
+        $newline = if ($text.Contains("`r`n")) { "`r`n" } else { "`n" }
+        $literal = ConvertTo-Json -InputObject $Proxy -Compress
+        $lines = @(
+            '// codex-browser-proxy-fix:v2 start'
+            "process.env.HTTP_PROXY ||= $literal;"
+            "process.env.HTTPS_PROXY ||= $literal;"
+            "process.env.ALL_PROXY ||= $literal;"
+            'process.env.NO_PROXY ||= "localhost,127.0.0.1,::1";'
+            '// codex-browser-proxy-fix:v2 end'
+            ''
+            $anchor
+        )
+        return ,$encoding.GetBytes($text.Replace($anchor, ($lines -join $newline)))
+    }
     $anchor = '      ...process.env,'
     if ([regex]::Matches($text, [regex]::Escape($anchor)).Count -ne 1) { throw 'The supported environment anchor is not unique.' }
     $newline = if ($text.Contains("`r`n")) { "`r`n" } else { "`n" }
@@ -64,16 +83,17 @@ function Read-Launcher([string]$Path) {
 function Get-LauncherState([string]$Path) {
     $bytes = Read-Launcher $Path
     $hash = Get-BytesHash $bytes
-    if ($hash -eq $script:OriginalHash) {
+    if ($hash -in @($script:OriginalHash, $script:RuntimeHash)) {
         return @{Status='Compatible'; Bytes=$bytes; Hash=$hash; Proxy=$null}
     }
     $backup = "$Path$script:BackupSuffix"
     if ([IO.File]::Exists($backup)) {
         Assert-LocalRegularPath $backup | Out-Null
         $original = Read-Launcher $backup
-        if ((Get-BytesHash $original) -eq $script:OriginalHash) {
+        if ((Get-BytesHash $original) -in @($script:OriginalHash, $script:RuntimeHash)) {
             $text = [Text.Encoding]::UTF8.GetString($bytes)
             $pattern = 'HTTP_PROXY: process\.env\.HTTP_PROXY \|\| "(http://(?:127\.0\.0\.1|\[::1\]):[0-9]{1,5})",'
+            if ((Get-BytesHash $original) -eq $script:RuntimeHash) { $pattern = 'process\.env\.HTTP_PROXY \|\|= "(http://(?:127\.0\.0\.1|\[::1\]):[0-9]{1,5})";' }
             $match = [regex]::Match($text, $pattern)
             if ($match.Success) {
                 $proxy = ConvertTo-LocalProxy $match.Groups[1].Value
@@ -127,7 +147,7 @@ function Invoke-ProxyFix {
         # Compute before creating the backup, so transformation errors cause no writes.
         $patched = New-PatchedBytes $state.Bytes $proxy
         if ([IO.File]::Exists($backup)) {
-            if ((Get-BytesHash (Read-Launcher $backup)) -ne $script:OriginalHash) { throw 'Existing backup does not match the verified original. It was not overwritten.' }
+            if ((Get-BytesHash (Read-Launcher $backup)) -ne $state.Hash) { throw 'Existing backup does not match the verified original. It was not overwritten.' }
         } else {
             Write-ExclusiveBytes $backup $state.Bytes
         }
@@ -136,32 +156,40 @@ function Invoke-ProxyFix {
     }
     if ($state.Status -eq 'Compatible') { return [pscustomobject]@{Status='AlreadyOriginal'; Changed=$false} }
     $original = Read-Launcher $backup
-    if ((Get-BytesHash $original) -ne $script:OriginalHash) { throw 'Backup changed. Restore refused.' }
+    if ((Get-BytesHash $original) -notin @($script:OriginalHash, $script:RuntimeHash)) { throw 'Backup changed. Restore refused.' }
     Write-AtomicLauncher $path $original $state.Hash
     return [pscustomobject]@{Status='Restored'; Changed=$true}
 }
 
 function Find-ProxyFixLauncher {
-    param([Parameter(Mandatory)][string]$CodexHome, [string]$PluginVersion)
+    param([Parameter(Mandatory)][string]$CodexHome, [string]$PluginVersion,
+        [string]$RuntimeRoot = (Join-Path $env:LOCALAPPDATA 'OpenAI/Codex/runtimes/cua_node'))
     $homePath = Assert-LocalRegularPath $CodexHome
     $cache = Assert-LocalRegularPath (Join-Path $homePath 'plugins/cache/openai-bundled/unified-computer-use')
     if (-not [IO.Directory]::Exists($cache)) { throw 'The unified-computer-use plugin cache was not found in this Codex home.' }
     if ($PluginVersion) {
-        if ($PluginVersion -ne $script:SupportedVersion) { throw 'Only plugin version 26.903.71938 is supported.' }
+        if ($PluginVersion -notin @($script:SupportedVersion, $script:RuntimeVersion)) { throw 'This plugin version is unsupported.' }
         $versions = @(Get-Item -LiteralPath (Join-Path $cache $PluginVersion) -ErrorAction Stop)
     } else {
         $versions = @(Get-ChildItem -LiteralPath $cache -Directory | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName '.mcp.json') })
         if ($versions.Count -ne 1) { throw 'No unique plugin candidate. Confirm the active version in Codex, then use -PluginVersion explicitly.' }
     }
-    if ($versions[0].Name -ne $script:SupportedVersion) { throw 'The installed plugin version is unsupported; no files changed.' }
+    if ($versions[0].Name -notin @($script:SupportedVersion, $script:RuntimeVersion)) { throw 'The installed plugin version is unsupported; no files changed.' }
     $base = $versions[0].FullName
-    $launcher = Assert-LocalRegularPath (Join-Path $base 'scripts/launch.mjs')
+    $isRuntime = $versions[0].Name -eq $script:RuntimeVersion
+    $launcher = if ($isRuntime) {
+        Assert-LocalRegularPath (Join-Path $RuntimeRoot 'a708e72b10c27b59/bin/node_modules/@oai/cua-repl/bin/cua-repl.mjs')
+    } else { Assert-LocalRegularPath (Join-Path $base 'scripts/launch.mjs') }
     $manifestPath = Assert-LocalRegularPath (Join-Path $base '.mcp.json')
     try {
         $manifest = [IO.File]::ReadAllText($manifestPath) | ConvertFrom-Json -AsHashtable
         $server = $manifest['mcpServers']['cua_repl']
         $arguments = @($server['args'])
         if ($arguments.Count -ne 1 -or -not [IO.Path]::IsPathFullyQualified($arguments[0]) -or [IO.Path]::GetFullPath($arguments[0]) -ne $launcher) { throw 'mismatch' }
+        if ($isRuntime) {
+            $expectedNode = Assert-LocalRegularPath (Join-Path $RuntimeRoot 'a708e72b10c27b59/bin/node.exe')
+            if (-not $server.ContainsKey('command') -or -not [IO.Path]::IsPathFullyQualified($server['command']) -or [IO.Path]::GetFullPath($server['command']) -ne $expectedNode) { throw 'runtime command mismatch' }
+        }
         if ($server.ContainsKey('enabled') -and $server['enabled'] -eq $false) { throw 'disabled' }
     } catch { throw 'The generated MCP manifest is missing, disabled, or does not reference this launcher. Open Codex once to regenerate it, then check again.' }
     return $launcher
