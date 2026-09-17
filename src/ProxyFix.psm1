@@ -3,7 +3,6 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:OriginalHash = 'a50b66879f7b72e45ab6fbaad77eff14a87680a946135f410c121b9b166a2597'
 $script:SupportedVersion = '26.903.71938'
-$script:RuntimeVersion = '26.908.40834'
 $script:RuntimeHash = '992174a5e637645aeb444adfdb1bae688e997bb84d7db07532f68e358e60f278'
 $script:BackupSuffix = '.codex-browser-proxy-fix.original.bak'
 
@@ -161,38 +160,48 @@ function Invoke-ProxyFix {
     return [pscustomobject]@{Status='Restored'; Changed=$true}
 }
 
+function Get-ProxyFixVersions {
+    param([Parameter(Mandatory)][string]$CodexHome)
+    $homePath = Assert-LocalRegularPath $CodexHome
+    $cache = Assert-LocalRegularPath (Join-Path $homePath 'plugins/cache/openai-bundled/unified-computer-use')
+    if (-not [IO.Directory]::Exists($cache)) { throw 'The unified-computer-use plugin cache was not found in this Codex home.' }
+    Get-ChildItem -LiteralPath $cache -Directory | Where-Object {
+        $_.Name -match '^\d+\.\d+\.\d+$' -and (Test-Path -LiteralPath (Join-Path $_.FullName '.mcp.json'))
+    } | Select-Object -ExpandProperty Name
+}
+
 function Find-ProxyFixLauncher {
     param([Parameter(Mandatory)][string]$CodexHome, [string]$PluginVersion,
         [string]$RuntimeRoot = (Join-Path $env:LOCALAPPDATA 'OpenAI/Codex/runtimes/cua_node'))
     $homePath = Assert-LocalRegularPath $CodexHome
-    $cache = Assert-LocalRegularPath (Join-Path $homePath 'plugins/cache/openai-bundled/unified-computer-use')
-    if (-not [IO.Directory]::Exists($cache)) { throw 'The unified-computer-use plugin cache was not found in this Codex home.' }
+    $versions = @(Get-ProxyFixVersions $homePath)
     if ($PluginVersion) {
-        if ($PluginVersion -notin @($script:SupportedVersion, $script:RuntimeVersion)) { throw 'This plugin version is unsupported.' }
-        $versions = @(Get-Item -LiteralPath (Join-Path $cache $PluginVersion) -ErrorAction Stop)
+        if ($PluginVersion -notmatch '^\d+\.\d+\.\d+$' -or $PluginVersion -notin $versions) { throw 'Invalid or missing plugin version.' }
     } else {
-        $versions = @(Get-ChildItem -LiteralPath $cache -Directory | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName '.mcp.json') })
         if ($versions.Count -ne 1) { throw 'No unique plugin candidate. Confirm the active version in Codex, then use -PluginVersion explicitly.' }
+        $PluginVersion = $versions[0]
     }
-    if ($versions[0].Name -notin @($script:SupportedVersion, $script:RuntimeVersion)) { throw 'The installed plugin version is unsupported; no files changed.' }
-    $base = $versions[0].FullName
-    $isRuntime = $versions[0].Name -eq $script:RuntimeVersion
-    $launcher = if ($isRuntime) {
-        Assert-LocalRegularPath (Join-Path $RuntimeRoot 'a708e72b10c27b59/bin/node_modules/@oai/cua-repl/bin/cua-repl.mjs')
-    } else { Assert-LocalRegularPath (Join-Path $base 'scripts/launch.mjs') }
+    $base = Join-Path $homePath "plugins/cache/openai-bundled/unified-computer-use/$PluginVersion"
     $manifestPath = Assert-LocalRegularPath (Join-Path $base '.mcp.json')
     try {
+        if ((Get-Item -LiteralPath $manifestPath).Length -gt 1MB) { throw 'size' }
         $manifest = [IO.File]::ReadAllText($manifestPath) | ConvertFrom-Json -AsHashtable
         $server = $manifest['mcpServers']['cua_repl']
         $arguments = @($server['args'])
-        if ($arguments.Count -ne 1 -or -not [IO.Path]::IsPathFullyQualified($arguments[0]) -or [IO.Path]::GetFullPath($arguments[0]) -ne $launcher) { throw 'mismatch' }
-        if ($isRuntime) {
-            $expectedNode = Assert-LocalRegularPath (Join-Path $RuntimeRoot 'a708e72b10c27b59/bin/node.exe')
-            if (-not $server.ContainsKey('command') -or -not [IO.Path]::IsPathFullyQualified($server['command']) -or [IO.Path]::GetFullPath($server['command']) -ne $expectedNode) { throw 'runtime command mismatch' }
-        }
+        if ($arguments.Count -ne 1 -or $arguments[0] -isnot [string]) { throw 'args' }
+        $launcher = Assert-LocalRegularPath $arguments[0]
+        $legacy = [IO.Path]::GetFullPath((Join-Path $base 'scripts/launch.mjs'))
+        if ($launcher -ne $legacy) {
+            $root = Assert-LocalRegularPath $RuntimeRoot
+            $relative = [IO.Path]::GetRelativePath($root, $launcher).Replace('\','/')
+            if ($relative -cnotmatch '^([a-f0-9]{16})/bin/node_modules/@oai/cua-repl/bin/cua-repl\.mjs$') { throw 'runtime boundary' }
+            $runtimeId = $Matches[1]
+            $expectedNode = Assert-LocalRegularPath (Join-Path $root "$runtimeId/bin/node.exe")
+            if (-not $server.ContainsKey('command') -or (Assert-LocalRegularPath $server['command']) -ne $expectedNode) { throw 'runtime command mismatch' }
+        } elseif ($PluginVersion -ne $script:SupportedVersion) { throw 'unknown legacy layout' }
         if ($server.ContainsKey('enabled') -and $server['enabled'] -eq $false) { throw 'disabled' }
-    } catch { throw 'The generated MCP manifest is missing, disabled, or does not reference this launcher. Open Codex once to regenerate it, then check again.' }
+    } catch { throw 'The generated MCP manifest is missing, disabled, or references an unsupported layout. No files changed.' }
     return $launcher
 }
 
-Export-ModuleMember -Function Invoke-ProxyFix, Find-ProxyFixLauncher
+Export-ModuleMember -Function Invoke-ProxyFix, Find-ProxyFixLauncher, Get-ProxyFixVersions

@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.0 (local)
+
+- Add a Chinese double-click repair window with saved local proxy preferences and background validation.
+- Discover changing runtime/version directories from the manifest while retaining exact file fingerprints and path boundaries.
+- Add bounded MCP startup verification and rollback of newly applied, unchanged patches on failure.
+- Keep existing patches on verification failure and never close Codex or Chrome.
+- Add workflow and startup-probe tests. Browser recovery still requires restart and actual page verification.
+
 ## v0.2.0
 
 - Support unified-computer-use 26.908.40834 and verified runtime a708e72b10c27b59; retain 26.903.71938 support.

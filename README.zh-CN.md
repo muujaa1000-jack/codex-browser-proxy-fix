@@ -2,17 +2,38 @@
 
 简体中文 · [English tutorial](README.md)
 
-这是一个**非官方、限定版本的 Windows 临时修复工具**，用于一种具体情况：Codex 浏览器控制进程没有收到它访问网络所需的本机代理配置。
+这是一个**非官方、按文件指纹校验的 Windows 临时修复工具**，用于一种具体情况：Codex 浏览器控制进程没有收到它访问网络所需的本机代理配置。
 
 它不能修复所有浏览器问题。扩展未连接、Chrome 未启动、登录失败、网站限制和应用内部连接异常，都可能有不同原因。`Check` 只检查本地文件是否兼容，不能读取已经运行的进程环境，也不能单凭超时判断故障原因。
 
+## 双击使用（本地 v0.3.0）
+
+解压完整文件夹，双击 **Start-Repair.cmd**。需要 Windows 和 PowerShell 7，不需要管理员权限。
+
+1. 首次打开，核对本机 HTTP／混合代理地址，点击 **检查并修复**。窗口中的环境变量建议值不会被自动当成确认。
+2. 成功后仅在本机记住代理地址。下次双击时，若只有一个候选插件，会自动检查修复；多个缓存版本需要先选择实际使用的版本，不会猜最新版本。
+3. **恢复原文件**会使用核验过的备份恢复；**查看结果**显示本机检查详情。工具不会关闭 Codex 或 Chrome。
+4. 显示“补丁已应用”后，请先完成正在运行的任务，再重启 Codex 并复测网页。显示“补丁已存在”则无需重复修改。
+
+新版启动验证会清除测试进程继承的代理变量，检查语法、工具握手、工具列表和正常退出。这不会操作浏览器，也不能证明外网可达。若验证失败，只在文件未再次变化时撤回本次新补丁；已有补丁不会因为验证失败被删除。旧启动器只做文件验证。
+
+代理地址保存在 `%LOCALAPPDATA%\CodexBrowserProxyFix\settings.json`，不放入仓库、不上传；工具不扫描端口。它支持版本号和目录编号变化，但如果启动器代码本身变化，仍可能需要更新工具。
+
+若下载文件被系统阻止，先审阅文件，再仅解除本工具文件的下载标记，无需修改执行策略：
+
+```powershell
+'./Start-Repair.cmd','./Repair-Window.ps1','./Repair-CodexBrowserProxy.ps1','./src/ProxyFix.psm1','./src/RepairWorkflow.psm1','./src/startup-probe.mjs' | ForEach-Object { Unblock-File -LiteralPath $_ }
+```
+
+自定义 Codex 目录可使用：`pwsh -NoProfile -STA -File ./Repair-Window.ps1 -CodexHome '你的绝对本地目录'`。
+
 ## 支持范围和验证情况
 
-| 项目 | v0.2.0 支持范围 |
+| 项目 | 当前支持范围 |
 | --- | --- |
 | 系统 | Windows |
 | 终端 | PowerShell 7.0 及以上，命令为 `pwsh`；本机实现测试使用 7.6.5 |
-| 插件 | `unified-computer-use` **26.903.71938** 和 **26.908.40834** |
+| 定位方式 | 旧版 26.903.71938；新版从数字插件版本及 16 位运行时目录编号动态定位 |
 | 原始启动器 SHA256 | `a50b66879f7b72e45ab6fbaad77eff14a87680a946135f410c121b9b166a2597` |
 | 代理 | 位于 `127.0.0.1` 或 `[::1]`、不带用户名密码的 **HTTP 代理**，必须填写端口 |
 | 额外依赖 | 无 |
@@ -25,7 +46,7 @@
 
 插件 **26.908.40834** 改为使用运行时 **a708e72b10c27b59** 中的 `bin/node_modules/@oai/cua-repl/bin/cua-repl.mjs`，不再使用旧插件目录里的 `scripts/launch.mjs`。新版原文件 SHA256 为 `992174a5e637645aeb444adfdb1bae688e997bb84d7db07532f68e358e60f278`，上表指纹属于旧版。
 
-工具会核对生成的插件配置，确认启动器和 Node 程序均指向当前用户本地 Codex 目录中的这一运行时。未知运行时会被拒绝。新版在调用 `launch()` 前补充环境默认值，再由启动器传给子进程。
+工具现在会核对生成的插件配置，确认启动器和 Node 程序均指向当前用户本地 Codex 运行时目录。目录编号可以变化，未知的启动器文件内容仍会被拒绝。新版在调用 `launch()` 前补充环境默认值，再由启动器传给子进程。
 
 在桌面应用 **26.908.4834.0** 上，使用这一插入位置的本机修正已通过重启后的 Chrome 和内置浏览器打开、读取、点击、返回测试。发布脚本另在不公开的原文件副本上验证应用、重复执行、恢复及子进程环境传递。这些结果不代表所有网站或后续升级都已验证。
 
@@ -61,7 +82,7 @@ pwsh -NoProfile -File .\Repair-CodexBrowserProxy.ps1 -Action Check
 - **Compatible**：文件与已验证的原始启动器一致。只代表可兼容，不代表你一定需要修复。
 - **Patched**：识别到本工具生成的完整补丁和对应的原始备份。
 - **Unsupported**：文件不同、曾被手工修改，或备份无法识别／已损坏。检查不会修改文件。
-- **No unique plugin candidate**：没有唯一候选插件，可能存在多个缓存版本。先在 Codex 中确认实际使用的版本；如果是支持版本，在**每条命令**后加 `-PluginVersion 26.903.71938`。不要猜哪个版本正在使用。
+- **No unique plugin candidate**：没有唯一候选插件，可能存在多个缓存版本。先在 Codex 中确认实际使用的版本；如果是支持版本，在**每条命令**后加 `-PluginVersion` 和实际版本号。不要猜哪个版本正在使用。
 
 默认从环境变量 `CODEX_HOME` 查找；未设置时使用 `$env:USERPROFILE\.codex`。自定义安装可通过 `-CodexHome` 指定绝对本地目录。链接／重定向目录、UNC 网络路径和不支持的目录结构会被拒绝。
 
@@ -135,6 +156,9 @@ pwsh -NoProfile -File .\Repair-CodexBrowserProxy.ps1 -Action Restore
 
 ```powershell
 pwsh -NoProfile -File .\tests\Run-Tests.ps1
+pwsh -NoProfile -File .\tests\Workflow-Tests.ps1
+pwsh -NoProfile -File .\tests\Probe-Tests.ps1
+pwsh -NoProfile -File .\tests\Window-Tests.ps1
 ```
 
 自动化测试使用原创的模拟启动器和临时目录，不包含也不修改真实 Codex 安装。正式命令行没有绕过指纹校验的选项。与已验证原始启动器的集成测试在本地临时副本中执行，该副本、官方代码和本机诊断材料不会随仓库发布。

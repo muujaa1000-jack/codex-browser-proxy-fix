@@ -172,11 +172,11 @@ try {
         [IO.File]::AppendAllText($path, '// later edit')
         Expect-Failure { Invoke-ProxyFix Restore $path }
     }
-    Test-Case 'Runtime discovery verifies manifest command and runtime boundary' {
+    Test-Case 'Dynamic runtime discovery verifies new versions, command and boundary' {
         param($path, $dir)
-        $versionDir = Join-Path $dir 'plugins/cache/openai-bundled/unified-computer-use/26.908.40834'
+        $versionDir = Join-Path $dir 'plugins/cache/openai-bundled/unified-computer-use/88.123.45678'
         $runtimeRoot = Join-Path $dir 'runtimes/cua_node'
-        $bin = Join-Path $runtimeRoot 'a708e72b10c27b59/bin'
+        $bin = Join-Path $runtimeRoot '0123456789abcdef/bin'
         $target = Join-Path $bin 'node_modules/@oai/cua-repl/bin/cua-repl.mjs'
         [IO.Directory]::CreateDirectory($versionDir) | Out-Null
         [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target)) | Out-Null
