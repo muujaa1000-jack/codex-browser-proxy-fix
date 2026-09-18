@@ -1,6 +1,8 @@
 # Changelog
 
-## v0.3.0 (local)
+## v0.3.0
+
+- Field report (2026-09-18): a user confirmed the tool worked after a further Codex update; future-version compatibility is not guaranteed.
 
 - Add a Chinese double-click repair window with saved local proxy preferences and background validation.
 - Discover changing runtime/version directories from the manifest while retaining exact file fingerprints and path boundaries.

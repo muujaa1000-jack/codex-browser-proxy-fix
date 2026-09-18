@@ -6,7 +6,7 @@ An **unofficial, fingerprint-guarded Windows workaround** for one specific failu
 
 This is not a universal browser repair tool. Extension connection errors, a closed Chrome instance, authentication failures, website restrictions, and application routing bugs can have different causes. `Check` verifies local file compatibility; it cannot determine the environment of an already-running process or prove the cause of a timeout.
 
-## Double-click repair (local v0.3.0)
+## Double-click repair (v0.3.0)
 
 Extract the complete folder and double-click **Start-Repair.cmd**. Requires Windows and PowerShell 7. The current window is in Chinese; English CLI instructions remain below.
 
@@ -26,6 +26,8 @@ If Windows blocks downloaded scripts, review the files first and unblock the fil
 ```
 
 Custom Codex home: `pwsh -NoProfile -STA -File ./Repair-Window.ps1 -CodexHome 'YOUR_ABSOLUTE_LOCAL_DIRECTORY'`.
+
+On 2026-09-18, a user reported that the double-click tool worked after another Codex update. This is a single-user field report, not a guarantee for every future version. Unknown launcher contents are still refused.
 
 ## Support and evidence
 
